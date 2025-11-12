@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Insor Mission Control",
+  "version": "0.1.0",
+  "identifier": "com.insor.app",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Insor.ai Mission Control",
+        "width": 1280,
+        "height": 800,
+        "decorations": true
+      }
+    ]
+  }
+}
