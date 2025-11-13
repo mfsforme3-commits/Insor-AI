@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAISettings } from "./core/aiSettings";
 import { useWorkspace } from "./core/workspace";
-import { DEFAULT_AI_CONFIG } from "./config/env";
-import { aiClient, type ChatMessage } from "./services/aiClient";
+import { useAiSettings } from "./core/aiSettings";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { AiRequestError, createChatCompletion, type ChatMessage } from "./services/aiClient";
 import { streamChatCompletion } from "./services/aiStream";
 import { startWorkspaceBridge } from "./services/workspaceBridge";
 import type { ArtifactSnapshot } from "./primitives/artifactManager";
@@ -30,6 +31,31 @@ function AppHeader({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   const workspaceLabel = state.projectName ?? "No Folder";
 
+interface AppHeaderProps {
+  onOpenSettings: () => void;
+}
+
+function AppHeader({ onOpenSettings }: AppHeaderProps) {
+  const { status } = useAiSettings();
+
+  const statusLabel =
+    status === "connected"
+      ? "AI Connected"
+      : status === "testing"
+        ? "Testing AI"
+        : status === "error"
+          ? "AI Error"
+          : "Configure AI";
+
+  const statusTone =
+    status === "connected"
+      ? "connected"
+      : status === "error"
+        ? "error"
+        : status === "testing"
+          ? "testing"
+          : "idle";
+
   return (
     <header className="app-header">
       <div className="header-content">
@@ -54,24 +80,26 @@ function AppHeader({ onOpenSettings }: { onOpenSettings: () => void }) {
             <span className="workspace-name">{workspaceLabel}</span>
           </div>
         </div>
-        <div className="window-controls">
-          <div className={statusClass}>
-            <span className="status-dot" aria-hidden="true" />
-            <span className="status-label">{statusLabel}</span>
-            {status === "error" && lastError ? <span className="status-error">{lastError}</span> : null}
+        <div className="header-actions">
+          <div className={`connection-indicator connection-${statusTone}`}>
+            <span className="connection-dot" aria-hidden="true" />
+            <span>{statusLabel}</span>
           </div>
-          <button className="window-btn" onClick={onOpenSettings} aria-label="Open settings">
+          <button className="header-settings-btn" onClick={onOpenSettings}>
             <span className="material-symbols-outlined">settings</span>
+            <span>Settings</span>
           </button>
-          <button className="window-btn minimize">
-            <span className="material-symbols-outlined">minimize</span>
-          </button>
-          <button className="window-btn maximize">
-            <span className="material-symbols-outlined">crop_square</span>
-          </button>
-          <button className="window-btn close">
-            <span className="material-symbols-outlined">close</span>
-          </button>
+          <div className="window-controls">
+            <button className="window-btn minimize">
+              <span className="material-symbols-outlined">minimize</span>
+            </button>
+            <button className="window-btn maximize">
+              <span className="material-symbols-outlined">crop_square</span>
+            </button>
+            <button className="window-btn close">
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -169,8 +197,10 @@ function Sidebar() {
 
 function WorkspaceSurface({ onShowArtifact }: { onShowArtifact: (artifact: ArtifactSnapshot) => void }) {
   const { state } = useWorkspace();
-  const { documentStream, plan, commandHistory, artifacts, conversation } = state;
-
+  const plan = state.plan;
+  const documentStream = state.documentStream;
+  const commandHistory = state.commandHistory.slice(0, 4);
+  const artifacts = state.artifacts.slice(0, 3);
   const statusCounts = plan.reduce(
     (acc, node) => {
       acc[node.status] += 1;
@@ -179,8 +209,22 @@ function WorkspaceSurface({ onShowArtifact }: { onShowArtifact: (artifact: Artif
     { done: 0, "in-progress": 0, waiting: 0 } as Record<"done" | "in-progress" | "waiting", number>
   );
 
-  const totalPlanItems = plan.length || 1;
-  const completion = Math.round((statusCounts.done / totalPlanItems) * 100);
+  const formatCommandStatus = (status: string) =>
+    status.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+
+  const formatTime = (iso?: string | null) => {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
+  return (
+    <main className="welcome-screen">
+      <div className="welcome-content">
+        <div className="logo-section">
+          <h1 className="app-name">Insor</h1>
+        </div>
 
   const latestCommands = commandHistory.slice(0, 4);
   const latestArtifacts = artifacts.slice(0, 3);
@@ -291,65 +335,90 @@ function WorkspaceSurface({ onShowArtifact }: { onShowArtifact: (artifact: Artif
             )}
           </div>
         </div>
-        <div className="workspace-panel conversation-preview">
-          <div className="panel-header">
-            <span className="material-symbols-outlined">forum</span>
-            <div>
-              <h3>Conversation</h3>
-              <p>Latest exchange with Insor</p>
+
+        <div className="activity-panels">
+          <div className="activity-card">
+            <div className="activity-card-header">
+              <span className="material-symbols-outlined">terminal</span>
+              <div>
+                <h4>Recent Commands</h4>
+                <p>Live feed from the Insor sandbox.</p>
+              </div>
             </div>
+            <ul className="activity-list">
+              {commandHistory.length === 0 ? (
+                <li className="activity-empty">No commands have run yet.</li>
+              ) : (
+                commandHistory.map((command) => (
+                  <li key={command.id} className={`activity-item command-${command.status}`}>
+                    <div>
+                      <p className="activity-primary">{command.command}</p>
+                      <p className="activity-secondary">{command.cwd}</p>
+                    </div>
+                    <div className="activity-meta">
+                      <span>{formatCommandStatus(command.status)}</span>
+                      <time>{formatTime(command.finishedAt ?? command.startedAt)}</time>
+                    </div>
+                  </li>
+                ))
+              )}
+            </ul>
           </div>
-          <div className="conversation-list">
-            {conversationPreview.length === 0 ? (
-              <p className="muted">No messages yet. Ask the assistant to start collaborating.</p>
-            ) : (
-              conversationPreview.map((turn) => (
-                <div key={turn.id} className={`conversation-turn ${turn.author}`}>
-                  <span className="turn-author">{turn.author === "ai" ? "Insor" : turn.author === "user" ? "You" : "System"}</span>
-                  <p>{turn.content}</p>
-                  <span className="turn-timestamp">{formatRelativeTime(turn.createdAt)}</span>
-                </div>
-              ))
-            )}
+
+          <div className="activity-card">
+            <div className="activity-card-header">
+              <span className="material-symbols-outlined">collections_bookmark</span>
+              <div>
+                <h4>Artifacts</h4>
+                <p>Snapshots captured during the mission.</p>
+              </div>
+            </div>
+            <ul className="activity-list">
+              {artifacts.length === 0 ? (
+                <li className="activity-empty">No artifacts captured yet.</li>
+              ) : (
+                artifacts.map((artifact) => (
+                  <li key={artifact.id} className="activity-item">
+                    <div>
+                      <p className="activity-primary">{artifact.label}</p>
+                      <p className="activity-secondary">{artifact.path}</p>
+                    </div>
+                    <div className="activity-meta">
+                      <time>{formatTime(artifact.createdAt)}</time>
+                    </div>
+                  </li>
+                ))
+              )}
+            </ul>
           </div>
         </div>
-      </section>
+      </div>
     </main>
   );
 }
 
 interface AssistantPaneProps {
   onShowArtifact: (artifact: ArtifactSnapshot) => void;
+  onOpenSettings: () => void;
 }
 
-function AssistantPane({ onShowArtifact }: AssistantPaneProps) {
+function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
   const { state, appendConversation, updateConversation } = useWorkspace();
-  const { status, lastError, markStatus } = useAISettings();
+  const { settings, markConnectionHealthy } = useAiSettings();
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const conversation = state.conversation.slice(-20);
   const plan = state.plan;
   const artifacts = state.artifacts.slice(0, 3);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [conversation]);
-
-  const stopStreaming = () => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-    }
-    markStatus("idle");
-    setIsSending(false);
-  };
+  const missingCredentials = !settings.apiKey.trim();
 
   const handleSend = async () => {
     const trimmed = message.trim();
     if (!trimmed || isSending) return;
+    if (missingCredentials) {
+      appendConversation("system", "Add an API key in Settings before asking Insor.");
+      return;
+    }
 
     abortRef.current?.abort();
 
@@ -382,30 +451,40 @@ function AssistantPane({ onShowArtifact }: AssistantPaneProps) {
     markStatus("connecting");
 
     try {
-      let streamedReply = "";
       const aiMessageId = appendConversation("ai", "");
-      await streamChatCompletion(
-        payload,
-        (chunk) => {
-          streamedReply += chunk;
-          updateConversation(aiMessageId, streamedReply);
-        },
-        controller.signal
-      );
-      if (!streamedReply && !controller.signal.aborted) {
-        const fallback = await aiClient.createChatCompletion(payload, controller.signal);
+      let streamedReply = "";
+      let receivedResponse = false;
+
+      if (settings.enableStreaming) {
+        try {
+          await streamChatCompletion(payload, (chunk) => {
+            streamedReply += chunk;
+            receivedResponse = true;
+            updateConversation(aiMessageId, streamedReply);
+          }, settings);
+        } catch (error) {
+          console.warn("Streaming failed, falling back to non-streaming completion", error);
+        }
+      }
+
+      if (!receivedResponse) {
+        const fallback = await createChatCompletion(payload, settings);
+        streamedReply = fallback;
+        receivedResponse = true;
         updateConversation(aiMessageId, fallback);
       }
-      markStatus("ready");
-    } catch (error) {
-      if (controller.signal.aborted) {
-        appendConversation("system", "Generation cancelled.");
-        markStatus("idle");
-      } else {
-        const details = error instanceof Error ? error.message : String(error);
-        appendConversation("system", `AI error: ${details}`);
-        markStatus("error", details);
+
+      if (receivedResponse) {
+        markConnectionHealthy();
       }
+    } catch (error) {
+      const details =
+        error instanceof AiRequestError
+          ? `${error.message} (status ${error.status})`
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      appendConversation("system", `AI error: ${details}`);
     } finally {
       abortRef.current = null;
       setIsSending(false);
@@ -421,6 +500,20 @@ function AssistantPane({ onShowArtifact }: AssistantPaneProps) {
           <span>{status === "ready" ? "Connected" : status === "connecting" ? "Connecting" : status === "error" ? "Error" : "Idle"}</span>
         </div>
       </header>
+
+      {missingCredentials && (
+        <div className="assistant-warning" role="status">
+          <span className="material-symbols-outlined" aria-hidden="true">
+            vpn_key
+          </span>
+          <div>
+            <p>Add your API key to start chatting with Insor.</p>
+            <button className="ghost-button" onClick={onOpenSettings}>
+              Open settings
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="assistant-plan">
         <div className="assistant-plan-header">
@@ -537,7 +630,7 @@ function AssistantPane({ onShowArtifact }: AssistantPaneProps) {
 function App() {
   const controller = useWorkspace();
   const [artifactPreview, setArtifactPreview] = useState<ArtifactSnapshot | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     startWorkspaceBridge(controller);
@@ -557,15 +650,15 @@ function App() {
 
   return (
     <div className="app-container">
-      <AppHeader onOpenSettings={() => setSettingsOpen(true)} />
+      <AppHeader onOpenSettings={() => setIsSettingsOpen(true)} />
       <div className="app-main">
         <Sidebar />
-        <WorkspaceSurface onShowArtifact={setArtifactPreview} />
-        <AssistantPane onShowArtifact={setArtifactPreview} />
+        <WelcomeScreen />
+        <AssistantPane onShowArtifact={setArtifactPreview} onOpenSettings={() => setIsSettingsOpen(true)} />
       </div>
 
       <ArtifactModal artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 }

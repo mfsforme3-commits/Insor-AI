@@ -1,17 +1,11 @@
-export interface AIConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
+const rawBaseUrl = import.meta.env.VITE_OPENAI_BASE_URL ?? "https://api.openai.com";
+const apiKey = import.meta.env.VITE_OPENAI_API_KEY ?? "";
+const model = import.meta.env.VITE_OPENAI_MODEL ?? "gpt-4o-mini";
 
-const defaultBaseUrl = import.meta.env.VITE_OPENAI_BASE_URL ?? "https://api.openai.com";
-const defaultApiKey = import.meta.env.VITE_OPENAI_API_KEY ?? "";
-const defaultModel = import.meta.env.VITE_OPENAI_MODEL ?? "gpt-4o-mini";
-
-const defaultConfig: AIConfig = {
-  baseUrl: defaultBaseUrl.replace(/\/$/, ""),
-  apiKey: defaultApiKey,
-  model: defaultModel
+export const defaultAiConfig = {
+  baseUrl: rawBaseUrl.replace(/\/$/, ""),
+  apiKey,
+  model
 };
 
 let currentConfig: AIConfig = { ...defaultConfig };

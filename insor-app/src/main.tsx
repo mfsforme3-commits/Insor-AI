@@ -3,14 +3,14 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import { WorkspaceProvider } from "./core/workspace";
-import { AISettingsProvider } from "./core/aiSettings";
+import { AiSettingsProvider } from "./core/aiSettings";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <AISettingsProvider>
+    <AiSettingsProvider>
       <WorkspaceProvider>
         <App />
       </WorkspaceProvider>
-    </AISettingsProvider>
+    </AiSettingsProvider>
   </React.StrictMode>
 );

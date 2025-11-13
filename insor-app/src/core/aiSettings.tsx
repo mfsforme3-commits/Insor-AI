@@ -1,102 +1,135 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { DEFAULT_AI_CONFIG, getAIConfig, type AIConfig, updateAIConfig } from "../config/env";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { defaultAiConfig } from "../config/env";
+import { resolveAiConfig, testAiSettings, type AiRuntimeConfig } from "../services/aiClient";
 
-export type AIConnectionStatus = "idle" | "connecting" | "ready" | "error";
+export interface AiSettings extends AiRuntimeConfig {
+  enableStreaming: boolean;
+}
 
-interface AISettingsContextValue {
-  config: AIConfig;
-  status: AIConnectionStatus;
+export type AiConnectionStatus = "idle" | "testing" | "connected" | "error";
+
+interface AiSettingsContextValue {
+  settings: AiSettings;
+  defaults: AiSettings;
+  status: AiConnectionStatus;
   lastError: string | null;
-  updateConfig: (patch: Partial<AIConfig>) => void;
-  markStatus: (status: AIConnectionStatus, error?: string | null) => void;
-  resetToDefaults: () => void;
+  updateSettings(patch: Partial<AiSettings>): void;
+  resetSettings(): void;
+  testConnection(overrides?: Partial<AiSettings>): Promise<void>;
+  markConnectionHealthy(): void;
 }
 
 const STORAGE_KEY = "insor.ai.settings";
 
-const AISettingsContext = createContext<AISettingsContextValue | null>(null);
+const defaultSettings: AiSettings = {
+  ...defaultAiConfig,
+  enableStreaming: true
+};
 
-function readStoredConfig(): Partial<AIConfig> | null {
-  if (typeof window === "undefined") return null;
+const AiSettingsContext = createContext<AiSettingsContextValue | null>(null);
+
+function sanitizeSettings(settings: Partial<AiSettings> | null | undefined): AiSettings {
+  const runtime = resolveAiConfig(settings ?? undefined);
+  return {
+    ...runtime,
+    enableStreaming: settings?.enableStreaming ?? defaultSettings.enableStreaming
+  };
+}
+
+function loadStoredSettings(): AiSettings {
+  if (typeof window === "undefined") {
+    return defaultSettings;
+  }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    const { baseUrl, apiKey, model } = parsed as Partial<AIConfig>;
-    return {
-      baseUrl: typeof baseUrl === "string" && baseUrl.trim() ? baseUrl : undefined,
-      apiKey: typeof apiKey === "string" ? apiKey : undefined,
-      model: typeof model === "string" && model.trim() ? model : undefined
-    };
+    if (!raw) {
+      return defaultSettings;
+    }
+    const parsed = JSON.parse(raw) as Partial<AiSettings>;
+    return sanitizeSettings(parsed);
   } catch (error) {
-    console.warn("Failed to parse stored AI settings", error);
-    return null;
+    console.warn("Failed to load stored AI settings", error);
+    return defaultSettings;
   }
 }
 
-export function AISettingsProvider({ children }: { children: ReactNode }) {
-  const initialConfig = useMemo(() => {
-    const stored = readStoredConfig();
-    const base = stored ? { ...getAIConfig(), ...stored } : getAIConfig();
-    updateAIConfig(base);
-    return base;
-  }, []);
+function persistSettings(settings: AiSettings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn("Failed to persist AI settings", error);
+  }
+}
 
-  const [config, setConfig] = useState<AIConfig>(initialConfig);
-  const [status, setStatus] = useState<AIConnectionStatus>("idle");
+export function AiSettingsProvider({ children }: { children: ReactNode }) {
+  const [settings, setSettings] = useState<AiSettings>(() => loadStoredSettings());
+  const [status, setStatus] = useState<AiConnectionStatus>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
 
-  useEffect(() => {
-    updateAIConfig(config);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-    }
-  }, [config]);
-
-  const updateConfig = useCallback((patch: Partial<AIConfig>) => {
-    setConfig((prev) => {
-      const next: AIConfig = {
-        ...prev,
-        ...patch
-      };
-      next.baseUrl = next.baseUrl.trim().replace(/\/$/, "");
-      next.model = next.model.trim();
-      setStatus("idle");
-      setLastError(null);
+  const updateSettings = useCallback((patch: Partial<AiSettings>) => {
+    setSettings((prev) => {
+      const next = sanitizeSettings({ ...prev, ...patch });
+      persistSettings(next);
       return next;
     });
   }, []);
 
-  const markStatus = useCallback((nextStatus: AIConnectionStatus, error: string | null = null) => {
-    setStatus(nextStatus);
-    setLastError(error ?? null);
+  const resetSettings = useCallback(() => {
+    setSettings(defaultSettings);
+    setStatus("idle");
+    setLastError(null);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
   }, []);
 
-  const resetToDefaults = useCallback(() => {
-    setConfig(DEFAULT_AI_CONFIG);
-    setStatus("idle");
+  const testConnection = useCallback(
+    async (overrides?: Partial<AiSettings>) => {
+      const target = sanitizeSettings({ ...settings, ...overrides });
+      setStatus("testing");
+      setLastError(null);
+      try {
+        await testAiSettings(target);
+        setStatus("connected");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus("error");
+        setLastError(message);
+        throw error;
+      }
+    },
+    [settings]
+  );
+
+  const markConnectionHealthy = useCallback(() => {
+    setStatus("connected");
     setLastError(null);
   }, []);
 
-  const value = useMemo<AISettingsContextValue>(() => {
-    return {
-      config,
+  const value = useMemo<AiSettingsContextValue>(
+    () => ({
+      settings,
+      defaults: defaultSettings,
       status,
       lastError,
-      updateConfig,
-      markStatus,
-      resetToDefaults
-    };
-  }, [config, status, lastError, updateConfig, markStatus, resetToDefaults]);
+      updateSettings,
+      resetSettings,
+      testConnection,
+      markConnectionHealthy
+    }),
+    [lastError, markConnectionHealthy, resetSettings, settings, status, testConnection, updateSettings]
+  );
 
-  return <AISettingsContext.Provider value={value}>{children}</AISettingsContext.Provider>;
+  return <AiSettingsContext.Provider value={value}>{children}</AiSettingsContext.Provider>;
 }
 
-export function useAISettings() {
-  const ctx = useContext(AISettingsContext);
+export function useAiSettings() {
+  const ctx = useContext(AiSettingsContext);
   if (!ctx) {
-    throw new Error("useAISettings must be used within an AISettingsProvider");
+    throw new Error("useAiSettings must be used within an AiSettingsProvider");
   }
   return ctx;
 }
