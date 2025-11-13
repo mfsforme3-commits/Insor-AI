@@ -1,4 +1,4 @@
-import { aiConfig } from "../config/env";
+import { getAIConfig } from "../config/env";
 import type { ChatMessage } from "./aiClient";
 
 export type StreamChunkHandler = (chunk: string) => void;
@@ -8,24 +8,31 @@ export async function streamChatCompletion(
   onChunk: StreamChunkHandler,
   signal?: AbortSignal
 ) {
-  if (!aiConfig.apiKey) {
+  const config = getAIConfig();
+
+  if (!config.apiKey) {
     throw new Error("Missing VITE_OPENAI_API_KEY. Set it in your .env file.");
   }
 
-  const response = await fetch(`${aiConfig.baseUrl}/v1/chat/completions`, {
+  const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${aiConfig.apiKey}`
+      Authorization: `Bearer ${config.apiKey}`
     },
     body: JSON.stringify({
-      model: aiConfig.model,
+      model: config.model,
       messages,
       temperature: 0.2,
       stream: true
     }),
     signal
   });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`OpenAI stream failed: ${response.status} ${errorBody}`);
+  }
 
   if (!response.body) {
     throw new Error("No response body for streamed completion");

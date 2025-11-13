@@ -1,4 +1,4 @@
-import { aiConfig } from "../config/env";
+import { getAIConfig } from "../config/env";
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -6,33 +6,26 @@ export type ChatMessage = {
 };
 
 class AIClient {
-  private baseUrl: string;
-  private apiKey: string;
-  private model: string;
+  async createChatCompletion(messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+    const config = getAIConfig();
 
-  constructor() {
-    this.baseUrl = aiConfig.baseUrl;
-    this.apiKey = aiConfig.apiKey;
-    this.model = aiConfig.model;
-  }
-
-  async createChatCompletion(messages: ChatMessage[]): Promise<string> {
-    if (!this.apiKey) {
+    if (!config.apiKey) {
       throw new Error("Missing VITE_OPENAI_API_KEY. Set it in your .env file.");
     }
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`
+        Authorization: `Bearer ${config.apiKey}`
       },
       body: JSON.stringify({
-        model: this.model,
+        model: config.model,
         messages,
         temperature: 0.2,
         stream: false
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -46,6 +39,26 @@ class AIClient {
       throw new Error("OpenAI response did not include content");
     }
     return content.trim();
+  }
+
+  async verifyCredentials(): Promise<void> {
+    const config = getAIConfig();
+
+    if (!config.apiKey) {
+      throw new Error("Missing VITE_OPENAI_API_KEY. Set it in your .env file.");
+    }
+
+    const response = await fetch(`${config.baseUrl}/v1/models`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to verify credentials: ${response.status} ${errorBody}`);
+    }
   }
 }
 
