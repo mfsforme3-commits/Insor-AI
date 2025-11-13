@@ -7,3 +7,27 @@ export const defaultAiConfig = {
   apiKey,
   model
 };
+
+let currentConfig: AIConfig = { ...defaultConfig };
+
+export function getAIConfig(): AIConfig {
+  return { ...currentConfig };
+}
+
+export function updateAIConfig(patch: Partial<AIConfig>): AIConfig {
+  currentConfig = {
+    ...currentConfig,
+    ...patch
+  };
+
+  currentConfig.baseUrl = currentConfig.baseUrl.replace(/\/$/, "");
+
+  return getAIConfig();
+}
+
+export function resetAIConfig(): AIConfig {
+  currentConfig = { ...defaultConfig };
+  return getAIConfig();
+}
+
+export const DEFAULT_AI_CONFIG = Object.freeze({ ...defaultConfig });

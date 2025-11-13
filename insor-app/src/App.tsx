@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useAISettings } from "./core/aiSettings";
 import { useWorkspace } from "./core/workspace";
 import { useAiSettings } from "./core/aiSettings";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -6,6 +7,29 @@ import { AiRequestError, createChatCompletion, type ChatMessage } from "./servic
 import { streamChatCompletion } from "./services/aiStream";
 import { startWorkspaceBridge } from "./services/workspaceBridge";
 import type { ArtifactSnapshot } from "./primitives/artifactManager";
+import type { CommandResult } from "./primitives/sandbox";
+import { formatRelativeTime } from "./utils/time";
+
+function AppHeader({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { state } = useWorkspace();
+  const { status, lastError } = useAISettings();
+
+  const statusLabel = useMemo(() => {
+    switch (status) {
+      case "ready":
+        return "Connected";
+      case "connecting":
+        return "Connecting";
+      case "error":
+        return "Needs Attention";
+      default:
+        return "Idle";
+    }
+  }, [status]);
+
+  const statusClass = useMemo(() => `status-indicator ${status}`, [status]);
+
+  const workspaceLabel = state.projectName ?? "No Folder";
 
 interface AppHeaderProps {
   onOpenSettings: () => void;
@@ -51,6 +75,10 @@ function AppHeader({ onOpenSettings }: AppHeaderProps) {
           </div>
           <div className="app-title">Insor</div>
           <div className="app-version">v1.0</div>
+          <div className="workspace-chip" title={workspaceLabel}>
+            <span className="material-symbols-outlined">folder</span>
+            <span className="workspace-name">{workspaceLabel}</span>
+          </div>
         </div>
         <div className="header-actions">
           <div className={`connection-indicator connection-${statusTone}`}>
@@ -82,6 +110,7 @@ function Sidebar() {
   const { state } = useWorkspace();
   const projectName = state.projectName ?? "No Folder Opened";
   const graphNodes = state.graphSnapshot?.nodes ?? [];
+  const openDocuments = state.openDocuments;
 
   return (
     <aside className="sidebar">
@@ -97,6 +126,20 @@ function Sidebar() {
             <span className="material-symbols-outlined">sync_alt</span>
           </div>
         </div>
+
+        {openDocuments.length > 0 && (
+          <div className="open-documents">
+            <div className="section-subtitle">Open Editors</div>
+            <div className="document-pills">
+              {openDocuments.map((doc) => (
+                <span key={doc} className="document-pill">
+                  <span className="material-symbols-outlined">description</span>
+                  {doc}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {graphNodes.length === 0 ? (
           <div className="welcome-content">
@@ -152,7 +195,7 @@ function Sidebar() {
   );
 }
 
-function WelcomeScreen() {
+function WorkspaceSurface({ onShowArtifact }: { onShowArtifact: (artifact: ArtifactSnapshot) => void }) {
   const { state } = useWorkspace();
   const plan = state.plan;
   const documentStream = state.documentStream;
@@ -183,50 +226,114 @@ function WelcomeScreen() {
           <h1 className="app-name">Insor</h1>
         </div>
 
-        <div className="action-cards">
-          <button className="action-card">
-            <span className="material-symbols-outlined">folder_open</span>
-            <span>Open Folder</span>
-          </button>
-          <button className="action-card">
-            <span className="material-symbols-outlined">history</span>
-            <span>Clone Repository</span>
-          </button>
-          <button className="action-card">
-            <span className="material-symbols-outlined">terminal</span>
-            <span>Connect via SSH</span>
-          </button>
-        </div>
+  const latestCommands = commandHistory.slice(0, 4);
+  const latestArtifacts = artifacts.slice(0, 3);
+  const conversationPreview = conversation.slice(-6);
 
-        {documentStream ? (
-          <div className="document-preview">
-            <div className="document-preview-header">
-              <span className="material-symbols-outlined">description</span>
-              <div>
-                <h4>{documentStream.title}</h4>
-                <p>Live plan streamed by Insor.ai</p>
-              </div>
+  return (
+    <main className="workspace-surface">
+      <section className="surface-row">
+        <div className="workspace-panel document-stream">
+          <div className="panel-header">
+            <span className="material-symbols-outlined">description</span>
+            <div>
+              <h3>Live Plan Stream</h3>
+              <p>Streaming updates from the AI pilot</p>
             </div>
-            {documentStream.sections.map((section) => (
-              <div key={section.heading} className="document-section">
-                <h5>{section.heading}</h5>
-                <p>{section.body}</p>
+          </div>
+          {documentStream ? (
+            <div className="document-body">
+              <h4>{documentStream.title}</h4>
+              {documentStream.sections.map((section) => (
+                <section key={section.heading}>
+                  <h5>{section.heading}</h5>
+                  <p>{section.body}</p>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="document-empty">
+              <p>No live document stream yet.</p>
+              <p className="muted">Kick off a task with the assistant to see real-time plans.</p>
+            </div>
+          )}
+        </div>
+        <div className="workspace-panel plan-overview">
+          <div className="panel-header">
+            <span className="material-symbols-outlined">route</span>
+            <div>
+              <h3>Plan Progress</h3>
+              <p>Track the current mission status</p>
+            </div>
+          </div>
+          <div className="plan-progress">
+            <div className="progress-bar">
+              <div className="progress-value" style={{ width: `${completion}%` }} />
+            </div>
+            <div className="progress-label">{completion}% complete</div>
+          </div>
+          <div className="status-grid">
+            {["in-progress", "waiting", "done"].map((status) => (
+              <div key={status} className={`status-card ${status}`}>
+                <span className="status-label">{status.replace("-", " ")}</span>
+                <span className="status-value">{statusCounts[status as keyof typeof statusCounts]}</span>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="whats-new">
-            What's New in Insor: <a href="#">Learn More</a>
-          </div>
-        )}
-
-        <div className="status-grid">
-          {["in-progress", "waiting", "done"].map((status) => (
-            <div key={status} className="status-card">
-              <span className="status-label">{status.replace("-", " ")}</span>
-              <span className="status-value">{statusCounts[status as keyof typeof statusCounts]}</span>
+          <ul className="plan-list">
+            {plan.map((node) => (
+              <li key={node.id} className={node.status}>
+                <span className="plan-title">{node.title}</span>
+                <span className="plan-status">{node.status}</span>
+              </li>
+            ))}
+            {plan.length === 0 && <li className="empty">No planned work yet.</li>}
+          </ul>
+        </div>
+      </section>
+      <section className="surface-row">
+        <div className="workspace-panel command-history">
+          <div className="panel-header">
+            <span className="material-symbols-outlined">terminal</span>
+            <div>
+              <h3>Command Center</h3>
+              <p>Latest actions executed by the workspace</p>
             </div>
-          ))}
+          </div>
+          <div className="command-list">
+            {latestCommands.length === 0 ? (
+              <p className="muted">No commands have been executed yet.</p>
+            ) : (
+              latestCommands.map((command) => <CommandCard key={command.id} command={command} />)
+            )}
+          </div>
+        </div>
+        <div className="workspace-panel artifact-gallery">
+          <div className="panel-header">
+            <span className="material-symbols-outlined">library_books</span>
+            <div>
+              <h3>Artifacts</h3>
+              <p>Snapshots captured during the mission</p>
+            </div>
+          </div>
+          <div className="artifact-list">
+            {latestArtifacts.length === 0 ? (
+              <p className="muted">No artifacts yet. Generate some by committing or diffing code.</p>
+            ) : (
+              latestArtifacts.map((artifact) => (
+                <button key={artifact.id} className="artifact-card" onClick={() => onShowArtifact(artifact)}>
+                  <div className="artifact-meta">
+                    <span className="material-symbols-outlined">snippet_folder</span>
+                    <div>
+                      <h4>{artifact.label}</h4>
+                      <p>{artifact.path}</p>
+                    </div>
+                  </div>
+                  <span className="artifact-date">Captured {formatRelativeTime(artifact.createdAt)}</span>
+                </button>
+              ))
+            )}
+          </div>
         </div>
 
         <div className="activity-panels">
@@ -300,7 +407,7 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
   const { settings, markConnectionHealthy } = useAiSettings();
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const conversation = state.conversation.slice(-6);
+  const conversation = state.conversation.slice(-20);
   const plan = state.plan;
   const artifacts = state.artifacts.slice(0, 3);
   const missingCredentials = !settings.apiKey.trim();
@@ -312,6 +419,11 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
       appendConversation("system", "Add an API key in Settings before asking Insor.");
       return;
     }
+
+    abortRef.current?.abort();
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     const chatHistory = state.conversation.map<ChatMessage>((turn) => ({
       role:
@@ -336,6 +448,7 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
     appendConversation("user", trimmed);
     setMessage("");
     setIsSending(true);
+    markStatus("connecting");
 
     try {
       const aiMessageId = appendConversation("ai", "");
@@ -373,6 +486,7 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
             : String(error);
       appendConversation("system", `AI error: ${details}`);
     } finally {
+      abortRef.current = null;
       setIsSending(false);
     }
   };
@@ -381,6 +495,10 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
     <aside className="assistant-pane">
       <header className="assistant-header">
         <h3>Insor Assistant</h3>
+        <div className={`assistant-status ${status}`}>
+          <span className="status-dot" aria-hidden="true" />
+          <span>{status === "ready" ? "Connected" : status === "connecting" ? "Connecting" : status === "error" ? "Error" : "Idle"}</span>
+        </div>
       </header>
 
       {missingCredentials && (
@@ -416,7 +534,7 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
         )}
       </div>
 
-      <div className="assistant-messages">
+      <div className="assistant-messages" ref={scrollRef}>
         {conversation.length === 0 ? (
           <div className="empty-chat-hint">No messages yet. Ask Insor anything about your repo.</div>
         ) : (
@@ -482,12 +600,18 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
               <span className="material-symbols-outlined">alternate_email</span>
               <span className="material-symbols-outlined">public</span>
               <span className="material-symbols-outlined">image</span>
-              <button className="mic-btn">
+              <button className="mic-btn" disabled={isSending}>
                 <span className="material-symbols-outlined">mic</span>
               </button>
-              <button className="send-btn" onClick={handleSend} disabled={!message.trim() || isSending}>
-                {isSending ? "Thinking..." : "Send"}
-              </button>
+              {isSending ? (
+                <button className="stop-btn" onClick={stopStreaming}>
+                  Stop
+                </button>
+              ) : (
+                <button className="send-btn" onClick={handleSend} disabled={!message.trim()}>
+                  Send
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -497,6 +621,8 @@ function AssistantPane({ onShowArtifact, onOpenSettings }: AssistantPaneProps) {
         <span>Insor Tab</span>
         <span className="material-symbols-outlined">notifications</span>
       </footer>
+
+      {status === "error" && lastError ? <div className="assistant-error">{lastError}</div> : null}
     </aside>
   );
 }
@@ -561,12 +687,135 @@ function ArtifactModal({ artifact, onClose }: ArtifactModalProps) {
         </div>
         <div className="modal-body">
           <p className="modal-meta">{artifact.path}</p>
-          <p className="modal-meta">
-            Captured {new Date(artifact.createdAt).toLocaleString()}
-          </p>
+          <p className="modal-meta">Captured {new Date(artifact.createdAt).toLocaleString()}</p>
           <pre className="command-output">{artifact.diff ?? "(diff preview not available yet)"}</pre>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface SettingsPanelProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function SettingsPanel({ open, onClose }: SettingsPanelProps) {
+  const { config, status, lastError, updateConfig, markStatus, resetToDefaults } = useAISettings();
+  const [baseUrl, setBaseUrl] = useState(config.baseUrl);
+  const [apiKey, setApiKey] = useState(config.apiKey);
+  const [model, setModel] = useState(config.model);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  useEffect(() => {
+    setBaseUrl(config.baseUrl);
+    setApiKey(config.apiKey);
+    setModel(config.model);
+  }, [config]);
+
+  if (!open) return null;
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    updateConfig({ baseUrl, apiKey, model });
+    markStatus("idle");
+    onClose();
+  };
+
+  const handleVerify = async () => {
+    setIsVerifying(true);
+    markStatus("connecting");
+    try {
+      updateConfig({ baseUrl, apiKey, model });
+      await aiClient.verifyCredentials();
+      markStatus("ready");
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      markStatus("error", details);
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
+  const handleReset = () => {
+    resetToDefaults();
+    setBaseUrl(DEFAULT_AI_CONFIG.baseUrl);
+    setApiKey(DEFAULT_AI_CONFIG.apiKey);
+    setModel(DEFAULT_AI_CONFIG.model);
+  };
+
+  return (
+    <div className="settings-backdrop" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose}>
+      <div className="settings-panel" onClick={(event) => event.stopPropagation()}>
+        <header className="settings-header">
+          <h2>Workspace Settings</h2>
+          <button className="icon-button" onClick={onClose} aria-label="Close settings">
+            ✕
+          </button>
+        </header>
+        <form className="settings-form" onSubmit={handleSubmit}>
+          <label>
+            API Base URL
+            <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com" />
+          </label>
+          <label>
+            API Key
+            <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-..." type="password" />
+          </label>
+          <label>
+            Default Model
+            <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4o-mini" />
+          </label>
+
+          <div className="settings-actions">
+            <button type="button" className="ghost" onClick={handleReset}>
+              Reset to defaults
+            </button>
+            <div className="settings-buttons">
+              <button type="button" onClick={handleVerify} disabled={isVerifying}>
+                {isVerifying ? "Verifying..." : "Test connection"}
+              </button>
+              <button type="submit" className="primary">
+                Save settings
+              </button>
+            </div>
+          </div>
+        </form>
+        <footer className="settings-footer">
+          <div className={`assistant-status ${status}`}>
+            <span className="status-dot" aria-hidden="true" />
+            <span>
+              {status === "ready"
+                ? "Connected"
+                : status === "connecting"
+                  ? "Verifying"
+                  : status === "error"
+                    ? "Connection error"
+                    : "Idle"}
+            </span>
+          </div>
+          {lastError ? <span className="settings-error">{lastError}</span> : null}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function CommandCard({ command }: { command: CommandResult }) {
+  return (
+    <div className={`command-card ${command.status}`}>
+      <div className="command-meta">
+        <span className="material-symbols-outlined">chevron_right</span>
+        <div>
+          <h4>{command.command}</h4>
+          <p>{command.cwd}</p>
+        </div>
+      </div>
+      <div className="command-status">
+        <span className="status-chip">{command.status}</span>
+        <span className="command-time">{formatRelativeTime(command.startedAt)}</span>
+      </div>
+      {command.output ? <pre className="command-output">{command.output}</pre> : null}
     </div>
   );
 }
